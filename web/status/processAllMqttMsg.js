@@ -387,17 +387,18 @@ function absShow(mqttpayload, variable) {
 	$(variable).text(valueStr);
 }
 
-function BatShow(mqttpayload, variable) {
-	var value = parseFloat(mqttpayload);
-	value = (value / 1000);
-	var valueStr = value.toLocaleString(undefined, {minimumFractionDigits: 3, maximumFractionDigits: 3}) ;
-	if ( value < 0 )
-	    valueStr = '<small>(Entladen)</small> ' + valueStr;
-	else
-	    valueStr = '<small>(Laden)</small> ' + valueStr;
-	$(variable).html(valueStr );
+unction BatShow(mqttpayload, variable) {
+		var value = parseFloat(mqttpayload);
+		if ( isNaN(value) ) {
+			value = 0;
+		}
+		var valueStr = value.toLocaleString(undefined) ;
+		if ( value < 0 )
+	    		valueStr = '<small>(Entladen)</small> ' + valueStr;
+		else
+	    		valueStr = '<small>(Laden)</small> ' + valueStr;
+		$(variable).html(valueStr );
 }
-
 
 //show kilo-payloads with 3 fraction digits
 function fractionDigitsShow(mqttpayload, variable) {
