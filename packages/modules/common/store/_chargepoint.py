@@ -1,6 +1,22 @@
 from modules.common.component_state import ChargepointState
 from modules.common.store import ValueStore
+from modules.common.store._api import LoggingValueStore
 from modules.common.store._broker import pub_to_broker
+from modules.common.store.ramdisk import files
+from helpermodules import compatibility
+
+
+class ChargepointValueStoreRamdisk(ValueStore[ChargepointState]):
+    def __init__(self, cp_id: int):
+        self.num = cp_id
+
+    def set(self, cp_state: ChargepointState):
+        files.charge_points[self.num].is_charging.write(cp_state.charge_state)
+        files.charge_points[self.num].voltages.write(cp_state.voltages)
+        files.charge_points[self.num].currents.write(cp_state.currents)
+        files.charge_points[self.num].energy.write(cp_state.imported)
+        files.charge_points[self.num].is_plugged.write(cp_state.plug_state)
+        files.charge_points[self.num].power.write(cp_state.power)
 
 
 class ChargepointValueStoreBroker(ValueStore[ChargepointState]):
@@ -21,4 +37,6 @@ class ChargepointValueStoreBroker(ValueStore[ChargepointState]):
 
 
 def get_chargepoint_value_store(id: int) -> ValueStore[ChargepointState]:
-    return ChargepointValueStoreBroker(id)
+    return LoggingValueStore(
+        ChargepointValueStoreRamdisk(id) if compatibility.is_ramdisk_in_use() else ChargepointValueStoreBroker(id)
+    )

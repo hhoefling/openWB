@@ -1,0 +1,174 @@
+import logging
+import RPi.GPIO as GPIO
+import time
+from typing import Callable, Dict, List, Optional, Tuple, Union
+
+from helpermodules import compatibility
+from modules.common.abstract_chargepoint import AbstractChargepoint
+from modules.common.component_context import SingleComponentUpdateContext
+from modules.common.component_state import ChargepointState
+from modules.common.fault_state import ComponentInfo
+from modules.common.modbus import ModbusSerialClient_
+from modules.common import sdm
+from modules.common import evse
+from modules.common import b32
+from modules.common.store import get_chargepoint_value_store
+
+log = logging.getLogger(__name__)
+
+
+def get_default_config() -> Dict:
+    return {"id": 0,
+            "serial_client": None,  # type: Optional[ModbusSerialClient_]
+            "connection_module": {
+                "client": None  # type: Optional[CONNECTION_MODULES]
+            },
+            "power_module": {
+                "client": None  # type: Optional[evse.Evse]
+            }}
+
+
+CONNECTION_MODULES = Union[sdm.Sdm630, b32.B32]
+
+
+class InternalOpenWB:
+    def __init__(self, id: int, serial_client: ModbusSerialClient_) -> None:
+        self.id = id
+        self.serial_client = serial_client
+
+
+class ClientFactory:
+    def __init__(self, duo_num: int, serial_client: ModbusSerialClient_) -> None:
+        self.duo_num = duo_num
+        self.meter_client, self.evse_client = self.__factory(serial_client)
+        self.read_error = 0
+
+    def __factory(self, serial_client: ModbusSerialClient_) -> Tuple[CONNECTION_MODULES, evse.Evse]:
+        METERS_CP1 = [(sdm.Sdm630, 105), (b32.B32, 201)]
+        METERS_CP2 = [(sdm.Sdm630, 106)]
+
+        def _check_meter(serial_client: ModbusSerialClient_, meter_list: List[Tuple[Callable, int]]):
+            for meter in meter_list:
+                meter_client = meter[0](meter[1], serial_client)
+                if meter_client.get_voltages()[0] > 20:
+                    return meter_client
+            else:
+                raise Exception("Es konnte keines der Meter in "+str(meter_list)+" zugeordnet werden.")
+
+        if self.duo_num == 1:
+            meter_client = _check_meter(serial_client, METERS_CP1)
+            evse_client = evse.Evse(1, serial_client)
+        else:
+            meter_client = _check_meter(serial_client, METERS_CP2)
+            evse_client = evse.Evse(2, serial_client)
+        return meter_client, evse_client
+
+    def get_pins_phase_switch(self, new_phases: int) -> Tuple[int, int]:
+        # return gpio_cp, gpio_relay
+        if self.duo_num == 1:
+            return 22, 29 if new_phases == 1 else 37
+        else:
+            return 15, 11 if new_phases == 1 else 13
+
+    def get_pins_cp_interruption(self) -> int:
+        # return gpio_cp, gpio_relay
+        if self.duo_num == 1:
+            return 22
+        else:
+            return 15
+
+
+class ChargepointModule(AbstractChargepoint):
+    def __init__(self, config: InternalOpenWB) -> None:
+        self.config = config
+        self.component_info = ComponentInfo(
+            self.config.id,
+            "Ladepunkt "+str(self.config.id), "chargepoint")
+        self.__store = get_chargepoint_value_store(self.config.id)
+        self.__client = ClientFactory(self.config.id, self.config.serial_client)
+
+    def set_current(self, current: float) -> None:
+        with SingleComponentUpdateContext(self.component_info):
+            if self.set_current_evse != current:
+                self.__client.evse_client.set_current(int(current))
+
+    def get_values(self) -> Tuple[ChargepointState, float]:
+        try:
+            _, power = self.__client.meter_client.get_power()
+            if power < 10:
+                power = 0
+            voltages = self.__client.meter_client.get_voltages()
+            currents = self.__client.meter_client.get_currents()
+            imported = self.__client.meter_client.get_imported()
+            phases_in_use = 1
+            if currents[0] > 3:
+                phases_in_use = 1
+            if currents[1] > 3:
+                phases_in_use = 2
+            if currents[2] > 3:
+                phases_in_use = 3
+
+            time.sleep(0.1)
+            plug_state, charge_state, self.set_current_evse = self.__client.evse_client.get_plug_charge_state()
+            self.__client.read_error = 0
+
+            rfid = compatibility.read_from_ramdisk("readtag")
+            # reset tag
+            if rfid != "0" and plug_state is False:
+                compatibility.write_to_ramdisk("readtag", "0")
+
+            chargepoint_state = ChargepointState(
+                power=power,
+                currents=currents,
+                imported=imported,
+                exported=0,
+                # powers=powers,
+                voltages=voltages,
+                # frequency=frequency,
+                plug_state=plug_state,
+                charge_state=charge_state,
+                phases_in_use=phases_in_use,
+                rfid=rfid
+            )
+        except Exception as e:
+            self.__client.read_error += 1
+            if self.__client.read_error > 5:
+                log.exception(
+                    "Anhaltender Fehler beim Auslesen der EVSE. Lade- und Steckerstatus werden zurückgesetzt.")
+                plug_state = False
+                charge_state = False
+                chargepoint_state = ChargepointState(
+                    plug_state=plug_state,
+                    charge_state=charge_state,
+                    phases_in_use=0
+                )
+            else:
+                raise e
+
+        self.__store.set(chargepoint_state)
+        return chargepoint_state, self.set_current_evse
+
+    def perform_phase_switch(self, phases_to_use: int, duration: int) -> None:
+        gpio_cp, gpio_relay = self.__client.get_pins_phase_switch(phases_to_use)
+        with SingleComponentUpdateContext(self.component_info):
+            self.__client.evse_client.set_current(0)
+        time.sleep(1)
+        GPIO.output(gpio_cp, GPIO.HIGH)  # CP off
+        GPIO.output(gpio_relay, GPIO.HIGH)  # 3 on/off
+        time.sleep(duration)
+        GPIO.output(gpio_relay, GPIO.LOW)  # 3 on/off
+        time.sleep(duration)
+        GPIO.output(gpio_cp, GPIO.LOW)  # CP on
+        time.sleep(1)
+
+    def perform_cp_interruption(self, duration: int) -> None:
+        gpio_cp = self.__client.get_pins_cp_interruption()
+        with SingleComponentUpdateContext(self.component_info):
+            self.__client.evse_client.set_current(0)
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BOARD)
+        GPIO.setup(gpio_cp, GPIO.OUT)
+
+        GPIO.output(gpio_cp, GPIO.HIGH)
+        time.sleep(duration)
+        GPIO.output(gpio_cp, GPIO.LOW)
