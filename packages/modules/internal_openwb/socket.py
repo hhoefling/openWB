@@ -78,7 +78,7 @@ class Socket(ChargepointModule):
         self.actor_moves += 1
 
     def cooldown_neccessary(self) -> bool:
-        return False if self.actor_moves < 10 else True
+        return self.actor_moves >= 10
 
     def perform_actor_cooldown(self):
         time.sleep(300)

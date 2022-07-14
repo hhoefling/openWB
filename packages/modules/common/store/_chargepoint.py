@@ -11,12 +11,13 @@ class ChargepointValueStoreRamdisk(ValueStore[ChargepointState]):
         self.num = cp_id
 
     def set(self, cp_state: ChargepointState):
-        files.charge_points[self.num].is_charging.write(cp_state.charge_state)
-        files.charge_points[self.num].voltages.write(cp_state.voltages)
-        files.charge_points[self.num].currents.write(cp_state.currents)
-        files.charge_points[self.num].energy.write(cp_state.imported)
-        files.charge_points[self.num].is_plugged.write(cp_state.plug_state)
-        files.charge_points[self.num].power.write(cp_state.power)
+        charge_point = files.charge_points[self.num]
+        charge_point.is_charging.write(cp_state.charge_state)
+        charge_point.voltages.write(cp_state.voltages)
+        charge_point.currents.write(cp_state.currents)
+        charge_point.energy.write(cp_state.imported)
+        charge_point.is_plugged.write(cp_state.plug_state)
+        charge_point.power.write(cp_state.power)
 
 
 class ChargepointValueStoreBroker(ValueStore[ChargepointState]):

@@ -43,7 +43,7 @@ Number = Union[int, float]
 
 
 class ModbusClient:
-    def __init__(self, delegate, address: str, port: int = 502):
+    def __init__(self, delegate: Union[ModbusSerialClient, ModbusTcpClient], address: str, port: int = 502):
         self.delegate = delegate
         self.address = address
         self.port = port
@@ -54,6 +54,11 @@ class ModbusClient:
 
     def __exit__(self, klass, value, traceback):
         self.delegate.__exit__(klass, value, traceback)
+        if value:
+            if isinstance(value, FaultState):
+                raise
+            else:
+                raise FaultState.error(__name__ + " " + str(type(value)) + " " + str(value)) from value
 
     def close_connection(self) -> None:
         try:

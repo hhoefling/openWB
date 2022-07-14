@@ -22,44 +22,29 @@ class Evse:
         self.client = client
         self.id = modbus_id
 
-    def __process_error(self, e):
-        if isinstance(e, FaultState):
-            raise
-        else:
-            raise FaultState.error(__name__+" "+str(type(e))+" " + str(e)) from e
-
     def get_plug_charge_state(self) -> Tuple[bool, bool, float]:
-        try:
-            set_current, _, state = self.client.read_holding_registers(1000, [ModbusDataType.UINT_16]*3, unit=self.id)
-            log.debug("Gesetzte Stromstärke EVSE: "+str(set_current) +
-                      ", Status: "+str(state)+", Modbus-ID: "+str(self.id))
-            if state == EvseState.READY:
-                plug_state = False
-                charge_state = False
-            elif(state == EvseState.EV_PRESENT or
-                    ((state == EvseState.CHARGING or state == EvseState.CHARGING_WITH_VENTILATION) and
-                     set_current == 0)):
-                plug_state = True
-                charge_state = False
-            elif (state == EvseState.CHARGING or state == EvseState.CHARGING_WITH_VENTILATION) and set_current > 0:
-                plug_state = True
-                charge_state = True
-            else:
-                raise FaultState.error("Unbekannter Zustand der EVSE: State " +
-                                       str(state)+", Sollstromstärke: "+str(set_current))
-            return plug_state, charge_state, set_current
-        except Exception as e:
-            self.__process_error(e)
+        set_current, _, state = self.client.read_holding_registers(1000, [ModbusDataType.UINT_16]*3, unit=self.id)
+        log.debug("Gesetzte Stromstärke EVSE: "+str(set_current) +
+                  ", Status: "+str(state)+", Modbus-ID: "+str(self.id))
+        if state == EvseState.READY:
+            plug_state = False
+            charge_state = False
+        elif(state == EvseState.EV_PRESENT or
+                ((state == EvseState.CHARGING or state == EvseState.CHARGING_WITH_VENTILATION) and
+                 set_current == 0)):
+            plug_state = True
+            charge_state = False
+        elif (state == EvseState.CHARGING or state == EvseState.CHARGING_WITH_VENTILATION) and set_current > 0:
+            plug_state = True
+            charge_state = True
+        else:
+            raise FaultState.error("Unbekannter Zustand der EVSE: State " +
+                                   str(state)+", Sollstromstärke: "+str(set_current))
+        return plug_state, charge_state, set_current
 
     def get_firmware_version(self) -> None:
-        try:
-            log.debug(
-                "FW-Version: "+str(self.client.read_holding_registers(1005, ModbusDataType.UINT_16, unit=self.id)))
-        except Exception as e:
-            self.__process_error(e)
+        log.debug(
+            "FW-Version: "+str(self.client.read_holding_registers(1005, ModbusDataType.UINT_16, unit=self.id)))
 
     def set_current(self, current: int) -> None:
-        try:
-            self.client.delegate.write_registers(1000, current, unit=self.id)
-        except Exception as e:
-            self.__process_error(e)
+        self.client.delegate.write_registers(1000, current, unit=self.id)

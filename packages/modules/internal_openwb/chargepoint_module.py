@@ -3,12 +3,12 @@ import RPi.GPIO as GPIO
 import time
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
-from helpermodules import compatibility
 from modules.common.abstract_chargepoint import AbstractChargepoint
 from modules.common.component_context import SingleComponentUpdateContext
 from modules.common.component_state import ChargepointState
 from modules.common.fault_state import ComponentInfo
 from modules.common.modbus import ModbusSerialClient_
+from modules.common.store import ramdisk_read, ramdisk_write
 from modules.common import sdm
 from modules.common import evse
 from modules.common import b32
@@ -100,22 +100,16 @@ class ChargepointModule(AbstractChargepoint):
             voltages = self.__client.meter_client.get_voltages()
             currents = self.__client.meter_client.get_currents()
             imported = self.__client.meter_client.get_imported()
-            phases_in_use = 1
-            if currents[0] > 3:
-                phases_in_use = 1
-            if currents[1] > 3:
-                phases_in_use = 2
-            if currents[2] > 3:
-                phases_in_use = 3
+            phases_in_use = sum(1 for current in currents if current > 3)
 
             time.sleep(0.1)
             plug_state, charge_state, self.set_current_evse = self.__client.evse_client.get_plug_charge_state()
             self.__client.read_error = 0
 
-            rfid = compatibility.read_from_ramdisk("readtag")
+            rfid = ramdisk_read("readtag")
             # reset tag
             if rfid != "0" and plug_state is False:
-                compatibility.write_to_ramdisk("readtag", "0")
+                ramdisk_write("readtag", "0")
 
             chargepoint_state = ChargepointState(
                 power=power,
