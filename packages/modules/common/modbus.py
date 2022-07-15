@@ -54,11 +54,6 @@ class ModbusClient:
 
     def __exit__(self, klass, value, traceback):
         self.delegate.__exit__(klass, value, traceback)
-        if value:
-            if isinstance(value, FaultState):
-                raise
-            else:
-                raise FaultState.error(__name__ + " " + str(type(value)) + " " + str(value)) from value
 
     def close_connection(self) -> None:
         try:
