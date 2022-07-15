@@ -9,7 +9,7 @@ from modules.common.modbus import ModbusDataType
 def exceptions_to_fault_state(delegate: Callable):
     def wrapper(*args, **kwargs):
         try:
-            delegate(args, kwargs)
+            return delegate(*args, **kwargs)
         except Exception as e:
             if isinstance(e, FaultState):
                 raise
