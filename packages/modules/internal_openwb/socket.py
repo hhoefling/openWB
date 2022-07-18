@@ -6,7 +6,6 @@ from typing import Dict, Tuple
 
 from modules.common.component_context import SingleComponentUpdateContext
 from modules.common.component_state import ChargepointState
-
 from modules.internal_openwb.chargepoint_module import ChargepointModule, InternalOpenWB
 
 log = logging.getLogger(__name__)
@@ -28,8 +27,8 @@ class ActorState(IntEnum):
 
 class Socket(ChargepointModule):
     def __init__(self, max_current: int, config: InternalOpenWB) -> None:
-        self.actor_moves = 0
         self.max_current = max_current
+        self.cooldown_tracker = CooldownTracker()
         super().__init__(config)
 
     def set_current(self, current: float) -> None:
@@ -62,23 +61,32 @@ class Socket(ChargepointModule):
         return self.chargepoint_state, self.set_current_evse
 
     def __open_actor(self):
-        GPIO.output(23, GPIO.LOW)
-        GPIO.output(26, GPIO.HIGH)
-        time.sleep(2)
-        GPIO.output(26, GPIO.LOW)
-        log.debug("Aktor auf")
-        self.actor_moves += 1
+        self.__set_actor(open=True)
 
     def __close_actor(self):
-        GPIO.output(23, GPIO.HIGH)
-        GPIO.output(26, GPIO.HIGH)
-        time.sleep(3)
-        GPIO.output(26, GPIO.LOW)
-        log.debug("Aktor zu")
-        self.actor_moves += 1
+        self.__set_actor(open=False)
 
-    def cooldown_neccessary(self) -> bool:
-        return self.actor_moves >= 10
+    def __set_actor(self, open: bool):
+        GPIO.output(23, GPIO.LOW if open else GPIO.HIGH)
+        GPIO.output(26, GPIO.HIGH)
+        time.sleep(2 if open else 3)
+        GPIO.output(26, GPIO.LOW)
+        log.debug("Actor opened" if open else "Actor closed")
+        self.cooldown_tracker.move()
 
     def perform_actor_cooldown(self):
         time.sleep(300)
+
+
+class CooldownTracker:
+    def __init__(self, max_movements: int = 10, max_seconds: int = 300):
+        self.movement_times = [0.0]*max_movements
+        self.max_seconds = max_seconds
+        self.counter = 0
+
+    def move(self) -> None:
+        self.movement_times[self.counter] = time.time()
+        self.counter = (self.counter + 1) % len(self.movement_times)
+
+    def is_cooldown_necessary(self) -> bool:
+        return time.time() - self.movement_times[(self.counter + 1) % len(self.movement_times)] < self.max_seconds

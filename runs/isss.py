@@ -10,6 +10,7 @@ import RPi.GPIO as GPIO
 # import sys
 # sys.path.insert(0, "/var/www/html/openWB/packages")
 from modules.internal_openwb import chargepoint_module, socket
+from modules.common.store import ramdisk_read
 from modules.common.store._util import get_rounding_function_by_digits
 from modules.common.fault_state import FaultState
 from modules.common.component_state import ChargepointState
@@ -42,8 +43,8 @@ class UpdateValues:
         "imported": "kWhCounter",
         "exported": None,
         "power": "W",
-        "voltages": ["VPhase1", "VPhase1", "VPhase1"],
-        "currents": ["APhase1", "APhase1", "APhase1"],
+        "voltages": ["VPhase1", "VPhase2", "VPhase3"],
+        "currents": ["APhase1", "APhase2", "APhase3"],
         "power_factors": None,
         "phases_in_use": "countPhasesInUse",
         "charge_state": "boolChargeStat",
@@ -66,7 +67,8 @@ class UpdateValues:
                     topic = self.MAP_KEY_TO_OLD_TOPIC[key]
                     if topic is not None:
                         if isinstance(topic, List):
-                            [self.pub_values_to_1_9(topic[i], value[i]) for i in range(0, 3)]
+                            for i in range(0, 3):
+                                self.pub_values_to_1_9(topic[i], value[i])
                         else:
                             self.pub_values_to_1_9(self.MAP_KEY_TO_OLD_TOPIC[key], value)
                     # pub to 2.0
@@ -120,19 +122,19 @@ class UpdateState:
         else:
             suffix = "s1"
         try:
-            set_current = int(float(compatibility.read_from_ramdisk("llsoll"+suffix)))
+            set_current = int(float(ramdisk_read("llsoll"+suffix)))
         except (FileNotFoundError, ValueError):
             set_current = 0
         try:
-            heartbeat = int(compatibility.read_from_ramdisk("heartbeat"))
+            heartbeat = int(ramdisk_read("heartbeat"))
         except (FileNotFoundError, ValueError):
             heartbeat = 0
         try:
-            cp_interruption_duration = int(float(compatibility.read_from_ramdisk("extcpulp1")))
+            cp_interruption_duration = int(float(ramdisk_read("extcpulp1")))
         except (FileNotFoundError, ValueError):
             cp_interruption_duration = 3
         try:
-            phases_to_use = int(float(compatibility.read_from_ramdisk("u1p3pstat")))
+            phases_to_use = int(float(ramdisk_read("u1p3pstat")))
         except (FileNotFoundError, ValueError):
             phases_to_use = 3
         log.debug("Values from ramdisk: set_current"+str(set_current) +
@@ -146,7 +148,7 @@ class UpdateState:
             if self.actor_cooldown_thread.is_alive():
                 return
         if isinstance(self.cp_module, socket.Socket):
-            if self.cp_module.cooldown_neccessary:
+            if self.cp_module.cooldown_tracker.is_cooldown_necessary():
                 self.__thread_actor_cooldown()
 
         if self.phase_switch_thread:
@@ -193,7 +195,7 @@ class Isss:
         self.serial_client = ModbusSerialClient_(self.detect_modbus_usb_port())
         self.cp1 = IsssChargepoint(self.serial_client, 1)
         try:
-            if int(compatibility.read_from_ramdisk("issslp2act")) == 1:
+            if int(ramdisk_read("issslp2act")) == 1:
                 self.cp2 = IsssChargepoint(self.serial_client, 2)
             else:
                 self.cp2 = None
@@ -240,9 +242,9 @@ class Isss:
     def get_cp_num(duo_num) -> int:
         try:
             if duo_num == 1:
-                return int(re.sub(r'\D', '', compatibility.read_from_ramdisk("parentCPlp1")))
+                return int(re.sub(r'\D', '', ramdisk_read("parentCPlp1")))
             else:
-                return int(re.sub(r'\D', '', compatibility.read_from_ramdisk("parentCPlp2")))
+                return int(re.sub(r'\D', '', ramdisk_read("parentCPlp2")))
         except Exception:
             FaultState.warning("Es konnte keine Ladepunkt-Nummer ermittelt werden. Auf Default-Wert 0 gesetzt.")
             return 0
@@ -251,7 +253,7 @@ class Isss:
     def get_parent_wb() -> str:
         # check for parent openWB
         try:
-            return compatibility.read_from_ramdisk("parentWB").replace('\\n', '').replace('\"', '')
+            return ramdisk_read("parentWB").replace('\\n', '').replace('\"', '')
         except Exception:
             FaultState.warning("Für den Betrieb im Nur-Ladepunkt-Modus ist zwingend eine Master-openWB erforderlich.")
             return ""

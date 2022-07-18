@@ -1,12 +1,12 @@
 import logging
 import RPi.GPIO as GPIO
 import time
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, NamedTuple, Optional, Tuple, Union
 
 from modules.common.abstract_chargepoint import AbstractChargepoint
 from modules.common.component_context import SingleComponentUpdateContext
 from modules.common.component_state import ChargepointState
-from modules.common.fault_state import ComponentInfo
+from modules.common.fault_state import ComponentInfo, FaultState
 from modules.common.modbus import ModbusSerialClient_
 from modules.common.store import ramdisk_read, ramdisk_write
 from modules.common import sdm
@@ -44,23 +44,25 @@ class ClientFactory:
         self.read_error = 0
 
     def __factory(self, serial_client: ModbusSerialClient_) -> Tuple[CONNECTION_MODULES, evse.Evse]:
-        METERS_CP1 = [(sdm.Sdm630, 105), (b32.B32, 201)]
-        METERS_CP2 = [(sdm.Sdm630, 106)]
+        meter_config = NamedTuple("MeterConfig", [('type', CONNECTION_MODULES), ('modbus_id', int)])
+        meter_configuration_options = [
+            [meter_config(sdm.Sdm630, modbus_id=105), meter_config(b32.B32, modbus_id=201)],
+            [meter_config(sdm.Sdm630, modbus_id=106)]
+        ]
 
-        def _check_meter(serial_client: ModbusSerialClient_, meter_list: List[Tuple[Callable, int]]):
-            for meter in meter_list:
-                meter_client = meter[0](meter[1], serial_client)
-                if meter_client.get_voltages()[0] > 20:
-                    return meter_client
+        def _check_meter(serial_client: ModbusSerialClient_, meters: List[meter_config]):
+            for meter_type, modbus_id in meters:
+                try:
+                    meter_client = meter_type(modbus_id, serial_client)
+                    if meter_client.get_voltages()[0] > 20:
+                        return meter_client
+                except Exception:
+                    pass
             else:
-                raise Exception("Es konnte keines der Meter in "+str(meter_list)+" zugeordnet werden.")
+                raise Exception("Es konnte keines der Meter in "+str(meters)+" zugeordnet werden.")
 
-        if self.duo_num == 1:
-            meter_client = _check_meter(serial_client, METERS_CP1)
-            evse_client = evse.Evse(1, serial_client)
-        else:
-            meter_client = _check_meter(serial_client, METERS_CP2)
-            evse_client = evse.Evse(2, serial_client)
+        meter_client = _check_meter(serial_client, meter_configuration_options[self.duo_num - 1])
+        evse_client = evse.Evse(self.duo_num, serial_client)
         return meter_client, evse_client
 
     def get_pins_phase_switch(self, new_phases: int) -> Tuple[int, int]:
@@ -79,6 +81,8 @@ class ClientFactory:
 
 
 class ChargepointModule(AbstractChargepoint):
+    PLUG_STANDBY_POWER_THRESHOLD = 10
+
     def __init__(self, config: InternalOpenWB) -> None:
         self.config = config
         self.component_info = ComponentInfo(
@@ -95,7 +99,7 @@ class ChargepointModule(AbstractChargepoint):
     def get_values(self) -> Tuple[ChargepointState, float]:
         try:
             _, power = self.__client.meter_client.get_power()
-            if power < 10:
+            if power < self.PLUG_STANDBY_POWER_THRESHOLD:
                 power = 0
             voltages = self.__client.meter_client.get_voltages()
             currents = self.__client.meter_client.get_currents()
@@ -136,8 +140,9 @@ class ChargepointModule(AbstractChargepoint):
                     charge_state=charge_state,
                     phases_in_use=0
                 )
+                FaultState.error(__name__ + " " + str(type(e)) + " " + str(e)).store_error(self.component_info)
             else:
-                raise e
+                raise FaultState.error(__name__ + " " + str(type(e)) + " " + str(e)) from e
 
         self.__store.set(chargepoint_state)
         return chargepoint_state, self.set_current_evse
