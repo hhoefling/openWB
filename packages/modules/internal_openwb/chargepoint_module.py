@@ -38,8 +38,8 @@ class InternalOpenWB:
 
 
 class ClientFactory:
-    def __init__(self, duo_num: int, serial_client: ModbusSerialClient_) -> None:
-        self.duo_num = duo_num
+    def __init__(self, local_charge_point_num: int, serial_client: ModbusSerialClient_) -> None:
+        self.local_charge_point_num = local_charge_point_num
         self.meter_client, self.evse_client = self.__factory(serial_client)
         self.read_error = 0
 
@@ -61,20 +61,20 @@ class ClientFactory:
             else:
                 raise Exception("Es konnte keines der Meter in "+str(meters)+" zugeordnet werden.")
 
-        meter_client = _check_meter(serial_client, meter_configuration_options[self.duo_num - 1])
-        evse_client = evse.Evse(self.duo_num, serial_client)
+        meter_client = _check_meter(serial_client, meter_configuration_options[self.local_charge_point_num - 1])
+        evse_client = evse.Evse(self.local_charge_point_num, serial_client)
         return meter_client, evse_client
 
     def get_pins_phase_switch(self, new_phases: int) -> Tuple[int, int]:
         # return gpio_cp, gpio_relay
-        if self.duo_num == 1:
+        if self.local_charge_point_num == 1:
             return 22, 29 if new_phases == 1 else 37
         else:
             return 15, 11 if new_phases == 1 else 13
 
     def get_pins_cp_interruption(self) -> int:
         # return gpio_cp, gpio_relay
-        if self.duo_num == 1:
+        if self.local_charge_point_num == 1:
             return 22
         else:
             return 15

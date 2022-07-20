@@ -1,8 +1,9 @@
 from enum import IntEnum
+import functools
 import logging
 import RPi.GPIO as GPIO
 import time
-from typing import Dict, Tuple
+from typing import Callable, Dict, Tuple
 
 from modules.common.component_context import SingleComponentUpdateContext
 from modules.common.component_state import ChargepointState
@@ -20,6 +21,27 @@ def get_default_config() -> Dict:
             "power_module": {}}
 
 
+class RateLimiter:
+    def __init__(self, max_calls: int, max_seconds: int):
+        self.movement_times = [0.0]*max_calls
+        self.max_seconds = max_seconds
+        self.counter = 0
+
+    def __call__(self, delegate: Callable):
+        @functools.wraps(delegate)
+        def wrapper(*args, **kwargs):
+            now = time.time()
+            sleep_needed = self.max_seconds - (now - self.movement_times[self.counter])
+            if sleep_needed > 0:
+                log.debug("Actor cooldown. Don't move actor.")
+                return lambda: None
+            else:
+                self.movement_times[self.counter] = time.time()
+                self.counter = (self.counter + 1) % len(self.movement_times)
+                return delegate(*args, **kwargs)
+        return wrapper
+
+
 class ActorState(IntEnum):
     CLOSED = 0,
     OPENED = 1
@@ -28,7 +50,6 @@ class ActorState(IntEnum):
 class Socket(ChargepointModule):
     def __init__(self, max_current: int, config: InternalOpenWB) -> None:
         self.max_current = max_current
-        self.cooldown_tracker = CooldownTracker()
         super().__init__(config)
 
     def set_current(self, current: float) -> None:
@@ -36,7 +57,7 @@ class Socket(ChargepointModule):
             try:
                 actor = ActorState(GPIO.input(19))
             except Exception:
-                log.error("Error getting actorstat! Using default '0'.")
+                log.error("Error getting actor status! Using default 'opened'.")
                 actor = ActorState.OPENED
 
             if actor == ActorState.CLOSED:
@@ -50,7 +71,7 @@ class Socket(ChargepointModule):
         try:
             actor = ActorState(GPIO.input(19))
         except Exception:
-            log.error("Error getting actorstat! Using default '0'.")
+            log.error("Error getting actor status! Using default 'opened'.")
             actor = ActorState.OPENED
         log.debug("Actor: "+str(actor))
         self.chargepoint_state, self.set_current_evse = super().get_values()
@@ -66,27 +87,10 @@ class Socket(ChargepointModule):
     def __close_actor(self):
         self.__set_actor(open=False)
 
+    @RateLimiter(max_calls=10, max_seconds=300)
     def __set_actor(self, open: bool):
         GPIO.output(23, GPIO.LOW if open else GPIO.HIGH)
         GPIO.output(26, GPIO.HIGH)
         time.sleep(2 if open else 3)
         GPIO.output(26, GPIO.LOW)
         log.debug("Actor opened" if open else "Actor closed")
-        self.cooldown_tracker.move()
-
-    def perform_actor_cooldown(self):
-        time.sleep(300)
-
-
-class CooldownTracker:
-    def __init__(self, max_movements: int = 10, max_seconds: int = 300):
-        self.movement_times = [0.0]*max_movements
-        self.max_seconds = max_seconds
-        self.counter = 0
-
-    def move(self) -> None:
-        self.movement_times[self.counter] = time.time()
-        self.counter = (self.counter + 1) % len(self.movement_times)
-
-    def is_cooldown_necessary(self) -> bool:
-        return time.time() - self.movement_times[(self.counter + 1) % len(self.movement_times)] < self.max_seconds

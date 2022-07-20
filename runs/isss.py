@@ -6,17 +6,15 @@ import threading
 import time
 from typing import Dict, List, Optional
 import RPi.GPIO as GPIO
-# uncomment for debugging
-# import sys
-# sys.path.insert(0, "/var/www/html/openWB/packages")
-from modules.internal_openwb import chargepoint_module, socket
+
+from helpermodules.pub import pub_single
+from helpermodules import compatibility
 from modules.common.store import ramdisk_read
 from modules.common.store._util import get_rounding_function_by_digits
 from modules.common.fault_state import FaultState
 from modules.common.component_state import ChargepointState
-from helpermodules.pub import pub_single
-from helpermodules import compatibility
 from modules.common.modbus import ModbusSerialClient_
+from modules.internal_openwb import chargepoint_module, socket
 from modules.internal_openwb.chargepoint_module import InternalOpenWB
 
 basePath = "/var/www/html/openWB"
@@ -52,8 +50,8 @@ class UpdateValues:
         "rfid": "LastScannedRfidTag",
     }
 
-    def __init__(self, duo_num: int) -> None:
-        self.cp_num = str(Isss.get_cp_num(duo_num))
+    def __init__(self, local_charge_point_num: int) -> None:
+        self.cp_num = str(Isss.get_cp_num(local_charge_point_num))
         self.parent_wb = Isss.get_parent_wb()
         self.old_counter_state = None
 
@@ -81,7 +79,8 @@ class UpdateValues:
                 topic = self.MAP_KEY_TO_OLD_TOPIC[key]
                 if topic is not None:
                     if isinstance(topic, List):
-                        [self.pub_values_to_1_9(topic[i], value[i]) for i in range(0, 3)]
+                        for i in range(0, 3):
+                            self.pub_values_to_1_9(topic[i], value[i])
                     else:
                         self.pub_values_to_1_9(self.MAP_KEY_TO_OLD_TOPIC[key], value)
                 # pub to 2.0
@@ -144,13 +143,6 @@ class UpdateState:
             set_current = 0
             log.error("Heartbeat Fehler seit " + str(heartbeat) + "Sekunden keine Verbindung, Stoppe Ladung.")
 
-        if self.actor_cooldown_thread:
-            if self.actor_cooldown_thread.is_alive():
-                return
-        if isinstance(self.cp_module, socket.Socket):
-            if self.cp_module.cooldown_tracker.is_cooldown_necessary():
-                self.__thread_actor_cooldown()
-
         if self.phase_switch_thread:
             if self.phase_switch_thread.is_alive():
                 log.debug("Thread zur Phasenumschaltung an LP"+str(self.cp_module.config.id) +
@@ -182,11 +174,6 @@ class UpdateState:
         self.cp_interruption_thread.start()
         log.debug("Thread zur CP-Unterbrechung an LP"+str(self.cp_module.config.id)+" gestartet.")
         compatibility.write_to_ramdisk("extcpulp1", "0")
-
-    def __thread_actor_cooldown(self) -> None:
-        self.actor_cooldown_thread = threading.Thread(target=self.cp_module.perform_actor_cooldown, args=())
-        self.actor_cooldown_thread.start()
-        log.debug("Thread zur Aktoren-Abkühlung an LP"+str(self.cp_module.config.id)+" gestartet.")
 
 
 class Isss:
@@ -239,9 +226,9 @@ class Isss:
             return "/dev/serial0"
 
     @staticmethod
-    def get_cp_num(duo_num) -> int:
+    def get_cp_num(local_charge_point_num) -> int:
         try:
-            if duo_num == 1:
+            if local_charge_point_num == 1:
                 return int(re.sub(r'\D', '', ramdisk_read("parentCPlp1")))
             else:
                 return int(re.sub(r'\D', '', ramdisk_read("parentCPlp2")))
@@ -260,9 +247,9 @@ class Isss:
 
 
 class IsssChargepoint:
-    def __init__(self, serial_client, duo_num) -> None:
-        self.duo_num = duo_num
-        if duo_num == 1:
+    def __init__(self, serial_client, local_charge_point_num) -> None:
+        self.local_charge_point_num = local_charge_point_num
+        if local_charge_point_num == 1:
             try:
                 with open('/home/pi/ppbuchse', 'r') as f:
                     max_current = int(f.read())
@@ -271,7 +258,7 @@ class IsssChargepoint:
                 self.module = chargepoint_module.ChargepointModule(InternalOpenWB(1, serial_client))
         else:
             self.module = chargepoint_module.ChargepointModule(InternalOpenWB(2, serial_client))
-        self.update_values = UpdateValues(duo_num)
+        self.update_values = UpdateValues(local_charge_point_num)
         self.update_state = UpdateState(self.module)
         self.old_plug_state = False
 
@@ -283,7 +270,7 @@ class IsssChargepoint:
                 if thread.is_alive():
                     self.new_plug_state = self.old_plug_state
         try:
-            if self.duo_num == 2:
+            if self.local_charge_point_num == 2:
                 time.sleep(0.1)
             state, _ = self.module.get_values()
             self.new_plug_state = state.plug_state
@@ -298,7 +285,7 @@ class IsssChargepoint:
             self.update_values.update_values(state)
             self.update_state.update_state()
         except Exception:
-            log.exception("Fehler bei Ladepunkt "+str(self.duo_num))
+            log.exception("Fehler bei Ladepunkt "+str(self.local_charge_point_num))
 
 
 Isss().loop()
