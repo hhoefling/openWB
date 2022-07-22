@@ -34,7 +34,7 @@ class RateLimiter:
             sleep_needed = self.max_seconds - (now - self.movement_times[self.counter])
             if sleep_needed > 0:
                 log.debug("Actor cooldown. Don't move actor.")
-                return lambda: None
+                return None
             else:
                 self.movement_times[self.counter] = time.time()
                 self.counter = (self.counter + 1) % len(self.movement_times)
