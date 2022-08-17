@@ -115,6 +115,9 @@ class ChargepointModule(AbstractChargepoint):
             if rfid != "0" and plug_state is False:
                 ramdisk_write("readtag", "0")
 
+            if (max(currents) > 0.1 and charge_state is False) or (max(currents) == 0 and charge_state):
+                raise ValueError("Ladestatus {} passt nicht zu den Strömen {}.".format(charge_state, currents))
+
             chargepoint_state = ChargepointState(
                 power=power,
                 currents=currents,
