@@ -10,13 +10,15 @@ import datetime
 import pkce
 import logging
 import pickle
+import copy
 
 # Constants
 BASE_URL = "https://id.mercedes-benz.com"
 OAUTH_URL = BASE_URL + "/as/authorization.oauth2"
 LOGIN_URL = BASE_URL + "/ciam/auth/login"
 TOKEN_URL = BASE_URL + "/as/token.oauth2"
-STATUS_URL = "https://oneapp.microservice.smart.com"
+#STATUS_URL = "https://oneapp.microservice.smart.com"
+STATUS_URL = "https://oneapp.microservice.smart.mercedes-benz.com"
 REDIRECT_URI = STATUS_URL
 SCOPE = "openid+profile+email+phone+ciam-uid+offline_access"
 CLIENT_ID = "70d89501-938c-4bec-82d0-6abb550b0825"
@@ -24,6 +26,9 @@ GUID = "280C6B55-F179-4428-88B6-E0CCF5C22A7C"
 ACCEPT_LANGUAGE = "de-de"
 
 TOKENS_REFRESH_THRESHOLD = 3600
+SSL_VERIFY_AUTH = True
+SSL_VERIFY_STATUS = True
+
 
 
 # helper functions
@@ -70,16 +75,12 @@ class smarteq:
         # currently is contains:
         # Tokens: refresh- and access-tokens of OAUTH
         # refresh_timestamp: epoch of last refresh_tokens.
-        self.store = {}
-        self.store['Tokens'] = {}
-        self.store['refresh_timestamp'] = int(0)
 
         self.session = requests.session()
 
         self.load_store()
-        self.oldTokens = self.store['Tokens']
+        self.oldTokens = copy.deepcopy(self.store['Tokens'])
         self.init = True
-        self.init = False  # test!!
 
     def load_store(self):
         try:
@@ -89,8 +90,14 @@ class smarteq:
                 self.store['Tokens'] = {}
                 self.store['refresh_timestamp'] = int(0)
             tf.close()
+        except FileNotFoundError:
+            self.log.warning("init: no store file found, full reconnect required")
+            self.store = {}
+            self.store['Tokens'] = {}
+            self.store['refresh_timestamp'] = int(0)
         except Exception as e:
             self.log.debug("init: loading stored data failed, file: " + self.storeFile)
+            self.store = {}
             self.store['Tokens'] = {}
             self.store['refresh_timestamp'] = int(0)
 
@@ -137,7 +144,7 @@ class smarteq:
         }
 
         try:
-            response = self.session.get(url, headers=headers)
+            response = self.session.get(url, headers=headers, verify=SSL_VERIFY_AUTH)
             self.log.debug("get_resume: status_code = " + str(response.status_code))
             self.log.debug("get_resume: text = " + str(response.text))
             soup = bs4.BeautifulSoup(response.text, 'html.parser')
@@ -178,7 +185,7 @@ class smarteq:
                            'rememberMe': 'true'})
 
         try:
-            response = self.session.post(url, headers=headers, data=data)
+            response = self.session.post(url, headers=headers, data=data, verify=SSL_VERIFY_AUTH)
             self.log.debug("login: status_code = " + str(response.status_code))
             if response.status_code > 400:
                 self.log.error("login: failed, status_code = " + str(response.status_code) +
@@ -215,7 +222,7 @@ class smarteq:
         data = json.dumps({'token': token})
 
         try:
-            response = self.session.post(url, headers=headers, data=data)
+            response = self.session.post(url, headers=headers, data=data, verify=SSL_VERIFY_AUTH)
             code = response.url.split('?')[1].split('=')[1]
             self.log.debug("get_code: code=" + code)
         except Exception as e:
@@ -240,7 +247,7 @@ class smarteq:
                "&redirect_uri=" + REDIRECT_URI + "&client_id=" + CLIENT_ID
 
         try:
-            response = self.session.post(url, headers=headers, data=data)
+            response = self.session.post(url, headers=headers, data=data, verify=SSL_VERIFY_AUTH)
             self.log.debug("get_tokens: status_code = " + str(response.status_code))
             Tokens = json.loads(response.text)
             if not Tokens['access_token']:
@@ -272,7 +279,7 @@ class smarteq:
             response = self.session.post(url,
                                          headers=headers,
                                          data=data,
-                                         verify=True,
+                                         verify=SSL_VERIFY_AUTH,
                                          allow_redirects=False,
                                          timeout=(30, 30))
             self.log.debug("refresh_tokens: status_code = " + str(response.status_code))
@@ -347,7 +354,7 @@ class smarteq:
         }
 
         try:
-            response = self.session.get(url, headers=headers)
+            response = self.session.get(url, headers=headers, verify=SSL_VERIFY_STATUS)
             res = json.loads(response.text)
             res_json = json.dumps(res, indent=4)
             if nested_key_exists(res, 'precond', 'data', 'soc', 'value'):
@@ -416,8 +423,8 @@ class smarteq:
 
         if self.store['Tokens'] != self.oldTokens:
             self.log.debug("reconnect: tokens changed, store token file")
+            self.write_store()
 
-        self.write_store()
         return soc
 
 

@@ -15,9 +15,9 @@ class ChargepointValueStoreRamdisk(ValueStore[ChargepointState]):
         charge_point.is_charging.write(cp_state.charge_state)
         charge_point.voltages.write(cp_state.voltages)
         charge_point.currents.write(cp_state.currents)
-        charge_point.energy.write(cp_state.imported)
+        charge_point.energy.write(cp_state.imported/1000)
         charge_point.is_plugged.write(cp_state.plug_state)
-        charge_point.power.write(cp_state.power)
+        charge_point.power.write(int(cp_state.power))
 
 
 class ChargepointValueStoreBroker(ValueStore[ChargepointState]):
@@ -31,6 +31,8 @@ class ChargepointValueStoreBroker(ValueStore[ChargepointState]):
         pub_to_broker("openWB/set/chargepoint/" + str(self.num) + "/get/imported", state.imported, 2)
         pub_to_broker("openWB/set/chargepoint/" + str(self.num) + "/get/exported", state.exported, 2)
         pub_to_broker("openWB/set/chargepoint/" + str(self.num) + "/get/power", state.power, 2)
+        pub_to_broker("openWB/set/chargepoint/" + str(self.num) + "/get/powers", state.powers, 2)
+        pub_to_broker("openWB/set/chargepoint/" + str(self.num) + "/get/frequency", state.frequency, 2)
         pub_to_broker("openWB/set/chargepoint/" + str(self.num) + "/get/phases_in_use", state.phases_in_use, 2)
         pub_to_broker("openWB/set/chargepoint/" + str(self.num) + "/get/charge_state", state.charge_state, 2)
         pub_to_broker("openWB/set/chargepoint/" + str(self.num) + "/get/plug_state", state.plug_state, 2)

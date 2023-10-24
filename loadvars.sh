@@ -107,6 +107,8 @@ loadvars(){
 			else
 				if [[ -e "/dev/ttyUSB0" ]]; then
 					echo "/dev/ttyUSB0" > ramdisk/evsemodulconfig
+				elif [[ -e "/dev/ttyACM0" ]]; then
+					echo "/dev/ttyACM0" > ramdisk/evsemodulconfig
 				else
 					echo "/dev/serial0" > ramdisk/evsemodulconfig
 				fi
@@ -115,7 +117,7 @@ loadvars(){
 
 			fi
 		fi
-		evseplugstate=$(sudo python runs/readmodbus.py "$modbusevsesource" "$modbusevseid" 1002 1)
+		evseplugstate=$(sudo python3 runs/readmodbus.py "$modbusevsesource" "$modbusevseid" 1002 1)
 		if [ -z "${evseplugstate}" ] || ! [[ "${evseplugstate}" =~ $IsNumberRegex ]]; then
 			# EVSE read returned empty or non-numeric value --> use last state for this loop
 			evseplugstate=$(</var/www/html/openWB/ramdisk/evseplugstate)
@@ -170,11 +172,11 @@ loadvars(){
 	fi
 	if [[ $evsecon == "ipevse" ]]; then
 		evseplugstatelp1=$(sudo python runs/readipmodbus.py "$evseiplp1" "$evseidlp1" 1002 1)
-		if [ -z "${evseplugstate}" ] || ! [[ "${evseplugstate}" =~ $IsNumberRegex ]]; then
+		if [ -z "${evseplugstatelp1}" ] || ! [[ "${evseplugstatelp1}" =~ $IsNumberRegex ]]; then
 			evseplugstate=$(</var/www/html/openWB/ramdisk/evseplugstate)
 			openwbDebugLog "MAIN" 0 "IP EVSE read CP1 issue - using previous state '${evseplugstate}'"
 		else
-			echo "$evseplugstate" > /var/www/html/openWB/ramdisk/evseplugstate
+			echo "$evseplugstatelp1" > /var/www/html/openWB/ramdisk/evseplugstate
 		fi
 		ladestatuslp1=$(</var/www/html/openWB/ramdisk/ladestatus)
 		if ((evseplugstatelp1 > 1)); then
@@ -192,7 +194,7 @@ loadvars(){
 	if ((lastmanagement == 1)); then
 		ConfiguredChargePoints=2
 		if [[ $evsecons1 == "modbusevse" ]]; then
-			evseplugstatelp2=$(sudo python runs/readmodbus.py "$evsesources1" "$evseids1" 1002 1)
+			evseplugstatelp2=$(sudo python3 runs/readmodbus.py "$evsesources1" "$evseids1" 1002 1)
 			if [ -z "${evseplugstatelp2}" ] || ! [[ "${evseplugstatelp2}" =~ $IsNumberRegex ]]; then
 				evseplugstatelp2=$(</var/www/html/openWB/ramdisk/evseplugstatelp2)
 				openwbDebugLog "MAIN" 0 "Modbus EVSE read CP2 issue - using previous state '${evseplugstatelp2}'"
@@ -302,7 +304,7 @@ loadvars(){
 
 
 		if [[ $evsecons2 == "modbusevse" ]]; then
-			evseplugstatelp3=$(sudo python runs/readmodbus.py "$evsesources2" "$evseids2" 1002 1)
+			evseplugstatelp3=$(sudo python3 runs/readmodbus.py "$evsesources2" "$evseids2" 1002 1)
 			if [ -z "${evseplugstatelp3}" ] || ! [[ "${evseplugstatelp3}" =~ $IsNumberRegex ]]; then
 				evseplugstatelp3=$(</var/www/html/openWB/ramdisk/evseplugstatelp3)
 				openwbDebugLog "MAIN" 0 "Modbus EVSE read CP3 issue - using previous state '${evseplugstatelp3}'"
@@ -1090,7 +1092,7 @@ loadvars(){
 	fi
 	echo $hausverbrauch > /var/www/html/openWB/ramdisk/hausverbrauch
 	usesimbezug=0
-	if [[ $wattbezugmodul == "bezug_solarwatt" ]]|| [[ $wattbezugmodul == "bezug_rct" ]]|| [[ $wattbezugmodul == "bezug_varta" ]] || [[ $wattbezugmodul == "bezug_kostalplenticoreem300haus" ]] || [[ $wattbezugmodul == "bezug_solarlog" ]] ; then
+	if [[ $wattbezugmodul == "bezug_rct" ]]|| [[ $wattbezugmodul == "bezug_kostalplenticoreem300haus" ]]  ; then
 		usesimbezug=1
 	fi
 	if ((usesimbezug == 1)); then
@@ -1132,7 +1134,7 @@ loadvars(){
 	if [[ $speichermodul == "speicher_kostalplenticore" ]] && [[ $pvwattmodul == "wr_plenticore" ]]; then
 		usesimpv=1
 	fi
-	if [[ $pvwattmodul == "wr_rct" ]]|| [[ $pvwattmodul == "wr_solarwatt" ]] || [[ $pvwattmodul == "wr_shelly" ]] || [[ $pvwattmodul == "wr_kostalpikovar2" ]]; then
+	if [[ $pvwattmodul == "wr_rct" ]] || [[ $pvwattmodul == "wr_kostalpikovar2" ]] ; then
 		usesimpv=1
 	fi
 	if ((usesimpv == 1)); then
@@ -1172,44 +1174,6 @@ loadvars(){
 	fi
 	#simcount für wr2
 	usesimpv2=0
-	if [[ $pv2wattmodul == "wr2_shelly" ]]; then
-		usesimpv2=1
-	fi
-	if ((usesimpv2 == 1)); then
-		ra='^-?[0-9]+$'
-		#rechnen auf wr2
-		watt4=$(</var/www/html/openWB/ramdisk/pv2watt)
-		if [[ -e /var/www/html/openWB/ramdisk/pv2watt0pos ]]; then
-			importtemp=$(</var/www/html/openWB/ramdisk/pv2watt0pos)
-		else
-			importtemp=$(timeout 4 mosquitto_sub -t openWB/pv/WH2Imported_temp)
-			if ! [[ $importtemp =~ $ra ]] ; then
-				importtemp="0"
-			fi
-			openwbDebugLog "MAIN" 0 "loadvars read openWB/pv/WH2Imported_temp from mosquito $importtemp"
-			echo $importtemp > /var/www/html/openWB/ramdisk/pv2watt0pos
-		fi
-		if [[ -e /var/www/html/openWB/ramdisk/pv2watt0neg ]]; then
-			exporttemp=$(</var/www/html/openWB/ramdisk/pv2watt0neg)
-		else
-			exporttemp=$(timeout 4 mosquitto_sub -t openWB/pv/WH2Export_temp)
-			if ! [[ $exporttemp =~ $ra ]] ; then
-				exporttemp="0"
-			fi
-			openwbDebugLog "MAIN" 0 "loadvars read openWB/pv/WH2Export_temp from mosquito $exporttemp"
-			echo $exporttemp > /var/www/html/openWB/ramdisk/pv2watt0neg
-		fi
-		sudo python /var/www/html/openWB/runs/simcount.py "$watt4" pv2 pv2poskwh pv2kwh
-		importtemp1=$(</var/www/html/openWB/ramdisk/pv2watt0pos)
-		exporttemp1=$(</var/www/html/openWB/ramdisk/pv2watt0neg)
-		if [[ $importtemp !=  "$importtemp1" ]]; then
-			mosquitto_pub -t openWB/pv/WH2Imported_temp -r -m "$importtemp1"
-		fi
-		if [[ $exporttemp !=  "$exporttemp1" ]]; then
-			mosquitto_pub -t openWB/pv/WH2Export_temp -r -m "$exporttemp1"
-		fi
-		# sim pv2 end
-	fi
 	#addition Zaehler pv1 und pv2 nach Simcount
 	if ((pv2vorhanden == 1)); then
 		pvkwh=$(</var/www/html/openWB/ramdisk/pvkwh)
@@ -1218,7 +1182,7 @@ loadvars(){
 		echo "$pvallwh" > /var/www/html/openWB/ramdisk/pvallwh
 	fi
 
-	if [[ $speichermodul == "speicher_tesvoltsma" ]] || [[ $speichermodul == "speicher_solarwatt" ]] || [[ $speichermodul == "speicher_rct" ]]|| [[ $speichermodul == "speicher_kostalplenticore" ]] || [[ $speichermodul == "speicher_varta" ]] ; then
+	if [[ $speichermodul == "speicher_tesvoltsma" ]] || [[ $speichermodul == "speicher_rct" ]] || [[ $speichermodul == "speicher_kostalplenticore" ]] ; then
 		ra='^-?[0-9]+$'
 		watt2=$(</var/www/html/openWB/ramdisk/speicherleistung)
 		if [[ -e /var/www/html/openWB/ramdisk/speicherwatt0pos ]]; then

@@ -46,6 +46,11 @@ class YieldMeter {
 
 	// to be called when values have changed
 	update() {
+		let importedEnergy = 0
+		let exportedEnergy = 0
+		let generatedEnergy = 0
+		let batEnergy = 0
+		let storedEnergy = 0
 		switch (wbdata.graphMode) {
 			case 'live':
 				this.plotdata = Object.values(wbdata.sourceSummary)
@@ -55,6 +60,11 @@ class YieldMeter {
 				if (wbdata.smartHomeSummary && wbdata.usageSummary.devices.energy > 0) {
 					this.plotdata.push(wbdata.usageSummary.devices)
 				}
+				importedEnergy = wbdata.sourceSummary.evuIn.energy
+				exportedEnergy = wbdata.usageSummary.evuOut.energy
+				generatedEnergy = wbdata.sourceSummary.pv.energy
+				batEnergy = wbdata.sourceSummary.batOut.energy
+				storedEnergy = wbdata.usageSummary.batIn.energy
 				break;
 			case 'day':
 				if (wbdata.showTodayGraph) {
@@ -66,25 +76,42 @@ class YieldMeter {
 					if (wbdata.smartHomeSummary && wbdata.usageSummary.devices.energy > 0) {
 						this.plotdata.push(wbdata.usageSummary.devices)
 					}
+					importedEnergy = wbdata.sourceSummary.evuIn.energy
+					exportedEnergy = wbdata.usageSummary.evuOut.energy
+					generatedEnergy = wbdata.sourceSummary.pv.energy
+					batEnergy = wbdata.sourceSummary.batOut.energy
+					storedEnergy = wbdata.usageSummary.batIn.energy
 				} else {
 					this.plotdata = Object.values(wbdata.historicSummary)
 						.filter(row => row.energy > 0 && row.name != "Geräte");
 					if (wbdata.smartHomeSummary && wbdata.historicSummary.devices.energy > 0) {
 						this.plotdata.push(wbdata.historicSummary.devices)
 					}
+					importedEnergy = wbdata.historicSummary.evuIn.energy
+					exportedEnergy = wbdata.historicSummary.evuOut.energy
+					generatedEnergy = wbdata.historicSummary.pv.energy
+					batEnergy = wbdata.historicSummary.batOut.energy
+					storedEnergy = wbdata.historicSummary.batIn.energy
 				}
 				break;
 			case 'month':
+			case 'year':
 				this.plotdata = Object.values(wbdata.historicSummary)
-					.filter(row => row.energy > 0 && row.name != "Geräte");
-
-				//.filter(row => this.plotfilter(row));
+					.filter(row => this.plotfilter(row));
 				if (wbdata.smartHomeSummary && wbdata.historicSummary.devices.energy > 0) {
 					this.plotdata.push(wbdata.historicSummary.devices)
 				}
+				importedEnergy = wbdata.historicSummary.evuIn.energy
+				exportedEnergy = wbdata.historicSummary.evuOut.energy
+				generatedEnergy = wbdata.historicSummary.pv.energy
+				batEnergy = wbdata.historicSummary.batOut.energy
+				storedEnergy = wbdata.historicSummary.batIn.energy
+
 				break;
 			default: break;
 		}
+		this.selfUsePercentage = Math.round((generatedEnergy - exportedEnergy) / generatedEnergy * 100)
+		this.autarchyPercentage = Math.round((generatedEnergy + batEnergy - exportedEnergy - storedEnergy) / (generatedEnergy + batEnergy + importedEnergy - exportedEnergy - storedEnergy) * 100)
 		this.adjustLabelSize()
 		const svg = this.createOrUpdateSvg();
 		this.drawChart(svg);
@@ -92,18 +119,16 @@ class YieldMeter {
 	};
 
 	plotfilter(row) {
-		if (row.energy > 0) {
-			if (row.name == "Geräte") {
-				if (wbdata.smartHomeSummary) {
-					return true
-				} else {
-					return false
-				}
-			} else {
-				return true
-			}
-		} else {
+		if (row instanceof ChargePoint && !wbdata.showCpEnergyDetails) {
 			return false
+		} else {
+			if (row.energy > 0) {
+				switch (row.name) {
+					case "Geräte": return (wbdata.smartHomeSummary)
+					case "Laden": return (wbdata.showCpEnergySummary)
+					default: return true
+				}
+			}
 		}
 	}
 	createOrUpdateSvg() {
@@ -123,7 +148,6 @@ class YieldMeter {
 		const ymax = d3.max(this.plotdata, (d) => d.energy);
 		this.xScale.domain(this.plotdata.map((d) => d.name));
 		this.yScale.domain([0, Math.ceil(ymax)]);
-
 		// Draw the bars
 		const bargroups = svg
 			.selectAll(".bar")
@@ -160,8 +184,12 @@ class YieldMeter {
 				.attr("fill-opacity", "66%");
 		}
 		const yAxisGenerator = d3.axisLeft(this.yScale)
-			.tickFormat(function (d) {
-				return ((d > 0) ? d : "");
+			.tickFormat((d, i) => {
+				if (wbdata.graphMode == 'year' || wbdata.graphMode == 'month') {
+					return ((d == 0) ? "" : (Math.round(d / 100) / 10))
+				} else {
+					return ((d == 0) ? "" : d)
+				}
 			})
 			.ticks(8)
 			.tickSizeInner(-this.width);
@@ -193,7 +221,7 @@ class YieldMeter {
 			.attr("y", -15)
 			.style("fill", this.axisColor)
 			.attr("font-size", this.axisFontSize)
-			.text("kWh")
+			.text((wbdata.graphMode == 'month' || wbdata.graphMode == 'year') ? "MWh" : "kWh")
 			;
 
 		// add value labels to the bars
@@ -205,7 +233,7 @@ class YieldMeter {
 			.append("text")
 			.attr("x", (d) => this.xScale(d.name) + this.xScale.bandwidth() / 2)
 			.attr("y", (d) => {
-				if (wbdata.graphMode != 'live' && d.pvPercentage > 0) {
+				if (wbdata.graphMode != 'live' && ((d.pvPercentage > 0) || (d.name == 'Netz') || (d.name == 'PV'))) {
 					return this.yScale(d.energy) - 25
 				} else {
 					return this.yScale(d.energy) - 10
@@ -222,25 +250,38 @@ class YieldMeter {
 				.attr("y", (d) => this.yScale(d.energy) - 10)
 				.attr("font-size", this.labelfontsize - 2)
 				.attr("text-anchor", "middle")
-				.attr("fill", (d) => this.pvColor)
-				.text((d) => this.pvString(d));
+				.attr("fill", (d) => this.subColor(d))
+				.text((d) => this.subString(d));
 		}
 		// Add category labels
 		labels
 			.append("text")
 			.attr("x", (d) => this.xScale(d.name) + this.xScale.bandwidth() / 2)
 			.attr("y", this.height - this.margin.bottom - 5)
-			.attr("font-size", this.labelfontsize)
+			.attr("font-size", (d) => (d.icon.length <= 2) ? this.labelfontsize + 3 : this.labelfontsize)
 			.attr("text-anchor", "middle")
 			.attr("fill", (d) => d.color)
-			.text((d) => (this.truncateCategory(d.name)));
+			.text((d) => (this.truncateCategory(d.icon)))
+			.classed("fas", (d) => d.icon.length <= 2);
 	}
 
-	pvString(item) {
+	subString(item) {
 		if (item.pvPercentage > 0) {
-			return ("(PV: " + item.pvPercentage.toLocaleString(undefined) + " %)");
+			return ("Aut: " + item.pvPercentage.toLocaleString(undefined) + " %");
+		} else if (item.name == 'Netz') {
+			return ("Aut: " + this.autarchyPercentage.toLocaleString(undefined) + " %");
+
+		} else if (item.name == 'PV') {
+			return ("Eigen: " + this.selfUsePercentage.toLocaleString(undefined) + " %")
 		} else {
 			return "";
+		}
+	}
+	subColor(item) {
+		if (item.name == 'Netz' || item.name == 'PV') {
+			return (this.axisColor)
+		} else {
+			return (this.pvColor)
 		}
 	}
 	updateHeading() {
@@ -258,8 +299,10 @@ class YieldMeter {
 				}
 				break;
 			case 'month':
-				heading = "Monatswerte " + formatMonth(wbdata.graphMonth.month, wbdata.graphMonth.year);
+				heading = heading + formatMonth(wbdata.graphMonth.month, wbdata.graphMonth.year);
 				break;
+			case 'year':
+				heading = heading + " " + wbdata.graphYear;
 			default: break;
 		}
 		d3.select("h3#energyheading").text(heading);
